@@ -25,6 +25,8 @@ const dbConnect = async () => {
     console.log('db connection successfull')
 }
 
+// starting the server
+
 dbConnect()
 .then(() => {
     app.listen(process.env.PORT, () => {
