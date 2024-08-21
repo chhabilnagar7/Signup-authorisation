@@ -17,9 +17,11 @@ app.use(cors({
     credentials:true
 
 }))
+
 app.use(cookieParser())
 app.use('/auth', UserRouter)
 
+// connect to database
 const dbConnect = async () => {
     await mongoose.connect('mongodb://localhost:27017/authentication')
     console.log('db connection successfull')

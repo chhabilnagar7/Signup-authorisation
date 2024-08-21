@@ -5,6 +5,7 @@ import Home from './Components/Home'
 import ForgotPassword from './Components/ForgotPassword'
 import ResetPassword from './Components/ResetPassword'
 import Dashboard from './Components/Dashboard'
+import VerifyOtpPage from './Components/VerifyOtpPage'
 
 function App() {
   
@@ -17,8 +18,10 @@ function App() {
           <Route path='/signup' element={<Signup/>}></Route>
           <Route path='/login' element={<Login/>}></Route>
           <Route path='/forgotPassword' element={<ForgotPassword/>}></Route>
+          <Route path="/verify-otp" element={<VerifyOtpPage />} />
           <Route path='/resetPassword/:token' element={<ResetPassword/>}></Route>
           <Route path='/dashboard' element={<Dashboard/>}></Route>
+          
 
         </Routes>
       </BrowserRouter>

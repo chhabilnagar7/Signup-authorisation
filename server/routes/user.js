@@ -1,73 +1,73 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import { User } from "../Models/User.js";
+import { OTP } from "../Models/OTP.js"; // Import OTP model
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
+import generateOTP from "./generateOtp.js";
+
 
 const router = express.Router();
 
-// for handling Signup
-
+// For handling Signup
 router.post("/signup", async (req, res) => {
   const { username, email, password } = req.body;
   const user = await User.findOne({ email });
   if (user) {
-    return res.json({ message: "user already existe" });
+    return res.json({ message: "User already exists" });
   }
 
-  const hashpassword = await bcrypt.hash(password, 10);
+  const hashPassword = await bcrypt.hash(password, 10);
   const newUser = new User({
     username,
     email,
-    password: hashpassword,
+    password: hashPassword,
   });
 
   await newUser.save();
-  return res.json({ status: true, message: "record registered" });
+  return res.json({ status: true, message: "User registered" });
 });
 
-// for handling Login 
-
+// For handling Login
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
-  // check for email is correct or not
   const user = await User.findOne({ email });
   if (!user) {
-    return res.json({ message: "user is not registered" });
+    return res.json({ message: "User not registered" });
   }
 
-  // comapare the password using bcrypt
   const validPassword = await bcrypt.compare(password, user.password);
   if (!validPassword) {
-    return res.json({ message: "password is incorrect" });
+    return res.json({ message: "Password is incorrect" });
   }
 
-  // creatimg jwt token for authentication
   const token = jwt.sign({ username: user.username }, process.env.KEY, {
     expiresIn: "1h",
   });
 
-  const fiveminutes = 5 * 60 * 1000; // into miliseconds
-
-  res.cookie("token", token, { httpOnly: true, maxAge: fiveminutes });
-  return res.json({ status: true, message: "login successfully" });
+  res.cookie("token", token, { httpOnly: true, maxAge: 5 * 60 * 1000 });
+  return res.json({ status: true, message: "Login successful" });
 });
 
-
-// reset password through email using nodemailer
+// Generate OTP 
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.json({ message: "user not registered" });
+      return res.json({ message: "User not registered" });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.KEY, {
-      expiresIn: "5m",
-    });
+    const otp = generateOTP();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // OTP valid for 5 minutes
 
-    // Create a transporter using the environment variables
+    // Save OTP to db
+    await OTP.findOneAndUpdate(
+      { email },
+      { otp, expiresAt },
+      { upsert: true }
+    );
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -76,41 +76,78 @@ router.post("/forgot-password", async (req, res) => {
       },
     });
 
-    // sending an email to new uer
+    const token = jwt.sign({ email }, process.env.KEY, { expiresIn: "5m" });
+
+    // Sendign email with OTP and reset link
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: "Password Verification",
-      text: `http://http://localhost:5173/resetPassword/${token}`,
+      subject: "Password Reset",
+      text: `To reset your password, please visit: http://localhost:5173/resetPassword/${token} \nYour OTP is: ${otp}`,
     };
 
-    transporter.sendMail(mailOptions, function (error, info) {
+    transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
-        return res.json({ message: "error sending email" });
-      } else {
-        return res.json({ status: true, message: "email sent" });
+        return res.json({ message: "Error sending email" });
       }
+      return res.json({ status: true, message: "Email sent" });
     });
   } catch (err) {
     console.log(err);
+    return res.json({ message: "Error processing request" });
   }
 });
 
-router.post('/reset-password/:token', async(req,res) => {
-  const {token} = req.params;
-  const {password} = req.body
-  try{
-    const decoded = await jwt.verify(token,process.env.KEY);
-    const id = decoded.id;
-    const hashPassword = await bcrypt.hash(password,10)
-    await User.findByIdAndUpdate({_id: id}, {password:hashPassword})
-    return res.json({status: true, message: "updated password"})
-  }catch(err){
-    return res.json("invalid token")
-  }
-})
+// Verify OTP
+router.post('/verify-otp', async (req, res) => {
+  const { email, otp } = req.body;
 
-// for protected routes 
+  try {
+    
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+
+    // Finding OTP record in db
+    const otpRecord = await OTP.findOne({ email, otp });
+
+    if (!otpRecord) {
+      return res.status(400).json({ message: 'Invalid OTP or OTP expired' });
+    }
+
+    // deleting Otp afer verification 
+    await OTP.deleteOne({ email, otp });
+
+    
+    res.json({ status: true, message: 'OTP verified successfully' });
+
+  } catch (err) {
+    console.error('Error in /verify-otp route:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Reset Password
+router.post('/reset-password/:token', async (req, res) => {
+  const { token } = req.params;
+  const { password } = req.body;
+  try {
+    const decoded = jwt.verify(token, process.env.KEY);
+    const user = await User.findOne({ email: decoded.email });
+    if (!user) {
+      return res.json({ message: "User not found" });
+    }
+
+    const hashPassword = await bcrypt.hash(password, 10);
+    await User.findByIdAndUpdate(user._id, { password: hashPassword });
+    return res.json({ status: true, message: "Password updated" });
+  } catch (err) {
+    return res.json({ message: "Invalid or expired token" });
+  }
+});
+
+// For protected routes
 const verifyUser = async (req, res, next) => {
   try {
     const token = req.cookies.token;
@@ -122,18 +159,17 @@ const verifyUser = async (req, res, next) => {
   } catch (err) {
     return res.json({ status: false, message: "Unauthorized" });
   }
-}
+};
 
 // Verify Route
 router.get("/verify", verifyUser, (req, res) => {
   return res.json({ status: true, message: "Authorized" });
 });
 
-// for logout 
-
-router.get('/logout',(req,res) => {
-  res.clearCookie('token')
-  return res.json({status:true})
-})
+// For logout
+router.get('/logout', (req, res) => {
+  res.clearCookie('token');
+  return res.json({ status: true });
+});
 
 export { router as UserRouter };
